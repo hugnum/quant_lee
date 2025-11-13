@@ -1,0 +1,37 @@
+# ------------------------------
+# Project .gitignore (updated 2025-10-20 05:50:32)
+# Maintainer note: removes venv, caches, build artifacts, IDE & OS junk
+# ------------------------------
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env/
+myenv/
+# Build artifacts
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+# OS-specific
+.DS_Store
+Thumbs.db
+desktop.ini
+# --- Project rule: track only root-level *.py files ---
+# Ignore everything...
+*
+# ...but keep .gitignore itself
+!/.gitignore
+# ...and root-level Python files
+!/*.py
