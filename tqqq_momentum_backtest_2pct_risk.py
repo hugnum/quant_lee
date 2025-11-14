@@ -26,6 +26,10 @@ def calculate_position_size_2pct_risk(cash, entry_price, atr_value,
     # R값 거리 계산 (ATR × 배수)
     r_distance = atr_value * atr_mult
     
+    # ATR이 0이거나 NaN인 경우 거래 건너뛰기
+    if not np.isfinite(r_distance) or r_distance <= 0:
+        return 0.0, 0.0
+    
     # 1코인당 손실 계산
     per_coin_loss = r_distance
     

@@ -1,12 +1,13 @@
 # =============================================================================
-# TQQQ MOM Strategy2 단순 백테스트 (고정 파라미터)
+# MOM Strategy2 단순 백테스트 (고정 파라미터) - 다중 종목 지원
 # =============================================================================
 # 
 # 기능:
 # - MOM Strategy2 (모멘텀 + MFI) 전략 백테스트
 # - 대화형 백테스트 기간 설정
 # - 고정 파라미터 사용 (최적화 없음)
-# - 상세한 성과 분석 및 시각화
+# - 여러 종목 동시 백테스트 및 비교
+# - 상세한 성과 분석 및 시각화 (CAGR 포함)
 #
 # 작성자: AI Assistant
 # 날짜: 2025-01-14
@@ -52,6 +53,7 @@ def mom_strategy2(df, p1, p2, ml, sl, verbose=True):
     """
     # 거래 수수료 설정
     fee_rate = 0.001
+    allocation_ratio = 0.5
     data = df.copy()
 
     # 파라미터 설정
@@ -82,16 +84,21 @@ def mom_strategy2(df, p1, p2, ml, sl, verbose=True):
     mfi = data['MFI'].values
     positions = np.zeros(len(data))
     pos = 0  # 현재 포지션 (0: 없음, 1: 보유)
+    num = 0  # 보유 주수
     
     # 백테스트 루프
     for i in range(1, len(data)):
         if pos == 0:  # 포지션 없음
             # 매수 조건: 모멘텀 양전 AND MFI > 임계값
             if signals[i] == 1 and mfi[i] > mfi_level:
+                entry_price = prices[i]
+                investable_cash = cash * allocation_ratio
+                potential_shares = int(investable_cash / (entry_price * (1 + fee_rate)))
+                if potential_shares <= 0:
+                    continue
                 pos = 1
                 positions[i] = 1
-                entry_price = prices[i]
-                num = int(cash / (entry_price * (1 + fee_rate)))
+                num = potential_shares
                 cash -= entry_price * num * (1 + fee_rate)
                 stop_loss_price = entry_price * (1 - stop_loss)
                 
@@ -311,6 +318,54 @@ def tear_sheet1(data):
 # 백테스트 기간 설정 함수
 # =============================================================================
 
+def get_stock_selection():
+    """
+    대화형으로 백테스트할 종목 선택
+    
+    Returns:
+    --------
+    list : 선택된 종목 리스트
+    """
+    available_stocks = ['AAPL', 'NVDA', 'TSLA', 'TQQQ', 'UPRO', 'QQQ']
+    
+    print("\n" + "=" * 60)
+    print("백테스트 종목 선택")
+    print("=" * 60)
+    print("\n사용 가능한 종목:")
+    for i, stock in enumerate(available_stocks, 1):
+        print(f"  {i}. {stock}")
+    print(f"  7. 전체 종목 백테스트")
+    print()
+    
+    try:
+        choice = input("선택 (번호 입력, 여러 개는 쉼표로 구분, 예: 1,2,3 또는 7) [기본값: 7]: ").strip() or "7"
+    except EOFError:
+        print("자동으로 전체 종목을 사용합니다.")
+        choice = "7"
+    
+    selected_stocks = []
+    
+    if choice == "7":
+        selected_stocks = available_stocks
+    else:
+        try:
+            indices = [int(x.strip()) for x in choice.split(',')]
+            for idx in indices:
+                if 1 <= idx <= 6:
+                    selected_stocks.append(available_stocks[idx - 1])
+                else:
+                    print(f"잘못된 번호: {idx}")
+            
+            if not selected_stocks:
+                print("선택된 종목이 없습니다. 전체 종목을 사용합니다.")
+                selected_stocks = available_stocks
+        except Exception:
+            print("잘못된 입력입니다. 전체 종목을 사용합니다.")
+            selected_stocks = available_stocks
+    
+    print(f"\n선택된 종목: {', '.join(selected_stocks)}")
+    return selected_stocks
+
 def get_backtest_period():
     """
     대화형으로 백테스트 기간 설정
@@ -324,7 +379,7 @@ def get_backtest_period():
         - days: 일수 (int, recent 모드에서만)
     """
     print("\n" + "=" * 60)
-    print("TQQQ MOM Strategy2 백테스트 기간 설정")
+    print("MOM Strategy2 백테스트 기간 설정")
     print("=" * 60)
     
     # 현재 날짜 계산
@@ -385,7 +440,7 @@ def get_backtest_period():
                 'end_date': end,
                 'days': None
             }
-        except:
+        except Exception:
             print("잘못된 날짜 형식입니다. 전체 데이터로 진행합니다.")
             return {
                 'mode': 'full',
@@ -429,7 +484,7 @@ def get_backtest_period():
                 'end_date': None,
                 'days': days
             }
-        except:
+        except Exception:
             print("잘못된 입력입니다. 전체 데이터로 진행합니다.")
             return {
                 'mode': 'full',
@@ -451,35 +506,34 @@ def get_backtest_period():
 # 데이터 로드 함수
 # =============================================================================
 
-def load_tqqq_data_with_period(period_config):
+def load_stock_data_with_period(ticker, period_config):
     """
-    기간 설정에 따라 TQQQ 데이터 로드
+    기간 설정에 따라 주식 데이터 로드
     
     Parameters:
     -----------
+    ticker : str
+        종목 심볼
     period_config : dict
         백테스트 기간 설정 정보
         
     Returns:
     --------
-    pandas.DataFrame : 필터링된 TQQQ 데이터
+    pandas.DataFrame : 필터링된 주식 데이터
     """
-    ticker = 'TQQQ'
-    
-    print(f"\nTQQQ 데이터 다운로드 중...")
+    print(f"\n{ticker} 데이터 다운로드 중...")
     
     try:
         # 전체 데이터 다운로드 (최대 범위) - 현재 날짜까지
         current_date = datetime.now().strftime('%Y-%m-%d')
-        df = yf.download(ticker, start='2015-01-01', end=current_date)
+        df = yf.download(ticker, start='2015-01-01', end=current_date, progress=False)
         
         # MultiIndex 컬럼을 단일 레벨로 변환
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
         
-        original_len = len(df)
-        original_start = df.index[0]
-        original_end = df.index[-1]
+        original_start = df.index[0] if len(df) > 0 else None
+        original_end = df.index[-1] if len(df) > 0 else None
         
         # 백테스트 기간 필터링
         if period_config['mode'] == 'range':
@@ -503,7 +557,7 @@ def load_tqqq_data_with_period(period_config):
         
         # 빈 데이터 체크
         if df.empty:
-            print("기간 필터 결과: 데이터가 비어 있습니다.")
+            print(f"   ⚠️ {ticker}: 기간 필터 결과 데이터가 비어 있습니다.")
             return pd.DataFrame()
         
         # 기간 정보
@@ -511,14 +565,15 @@ def load_tqqq_data_with_period(period_config):
         end_date = df.index[-1]
         total_days = (end_date - start_date).days
         
-        print(f"TQQQ 데이터 로드 완료: {len(df)}개 거래일 (원본: {original_len}개)")
-        print(f"   전체 데이터 기간: {original_start.strftime('%Y-%m-%d')} ~ {original_end.strftime('%Y-%m-%d')}")
-        print(f"   백테스트 기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({total_days}일, {total_days/365:.1f}년)")
+        print(f"   ✅ {ticker} 데이터 로드 완료: {len(df)}개 거래일")
+        if original_start and original_end:
+            print(f"      전체 데이터 기간: {original_start.strftime('%Y-%m-%d')} ~ {original_end.strftime('%Y-%m-%d')}")
+        print(f"      백테스트 기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({total_days}일, {total_days/365:.1f}년)")
         
         return df
         
     except Exception as e:
-        print(f"TQQQ 데이터 로드 오류: {e}")
+        print(f"   ❌ {ticker} 데이터 로드 오류: {e}")
         return pd.DataFrame()
 
 # =============================================================================
@@ -527,11 +582,16 @@ def load_tqqq_data_with_period(period_config):
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TQQQ MOM Strategy2 백테스트 (고정 파라미터)")
+    print("MOM Strategy2 백테스트 (고정 파라미터) - 다중 종목")
     print("=" * 60)
 
     # =================================================================
-    # 1. 백테스트 기간 설정
+    # 1. 종목 선택
+    # =================================================================
+    selected_stocks = get_stock_selection()
+
+    # =================================================================
+    # 2. 백테스트 기간 설정
     # =================================================================
     period_config = get_backtest_period()
 
@@ -553,7 +613,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # =================================================================
-    # 2. 실행 확인 및 데이터 로드
+    # 3. 실행 확인
     # =================================================================
     print()
     try:
@@ -561,155 +621,182 @@ if __name__ == "__main__":
     except EOFError:
         print("자동으로 백테스트를 시작합니다...")
 
-    # TQQQ 데이터 로드
-    df = load_tqqq_data_with_period(period_config)
-    if df.empty:
-        print("데이터 로드 실패")
-        exit()
-
     # =================================================================
-    # 3. 기본 정보 출력
+    # 4. 고정 파라미터 설정
     # =================================================================
-    print(f"\nTQQQ 기본 정보:")
-    print(f"시작가: ${df['Close'].iloc[0]:.2f}")
-    print(f"종료가: ${df['Close'].iloc[-1]:.2f}")
-    print(f"기간 수익률: {((df['Close'].iloc[-1]/df['Close'].iloc[0])-1)*100:.2f}%")
-
-    # =================================================================
-    # 4. 고정 파라미터로 Strategy2 백테스트
-    # =================================================================
-    print("\n" + "=" * 50)
-    print("MOM Strategy2 백테스트 (고정 파라미터)")
-    print("=" * 50)
-
-    # 고정 파라미터 설정
-    period1 = 6      # 모멘텀 계산 기간
-    period2 = 6      # MFI 계산 기간  
-    mfi_level = 50   # MFI 임계값
+    period1 = 5      # 모멘텀 계산 기간
+    period2 = 14     # MFI 계산 기간  
+    mfi_level = 45.0 # MFI 임계값
     stop_loss = 0.10 # 손절매 비율
 
-    print(f"사용된 파라미터:")
+    print(f"\n사용된 파라미터:")
     print(f"- 모멘텀 기간: {period1}일")
     print(f"- MFI 기간: {period2}일")
     print(f"- MFI 임계값: {mfi_level}")
     print(f"- 손절매 비율: {stop_loss*100:.1f}%")
 
-    # 백테스트 실행
-    print(f"\n백테스트 실행 중...")
-    t1 = time.time()
-    data, ret = mom_strategy2(df, period1, period2, mfi_level, stop_loss)
-    t2 = time.time()
-    print(f'백테스트 완료 (소요시간: {(t2-t1):.2f}초)')
-
-    print(f"\nMOM Strategy2 결과:")
-    stats = tear_sheet1(data)
-
     # =================================================================
-    # 5. 결과 시각화
+    # 5. 각 종목별 백테스트 실행
+    # =================================================================
+    results = {}  # 종목별 결과 저장
+    
+    print("\n" + "=" * 70)
+    print("백테스트 실행 중...")
+    print("=" * 70)
+    
+    for ticker in selected_stocks:
+        print(f"\n[{ticker}] 백테스트 진행 중...")
+        
+        # 데이터 로드
+        df = load_stock_data_with_period(ticker, period_config)
+        if df.empty:
+            print(f"   ⚠️ {ticker}: 데이터 로드 실패, 건너뜁니다.")
+            continue
+        
+        # 기본 정보 출력
+        print(f"\n   {ticker} 기본 정보:")
+        print(f"   시작가: ${df['Close'].iloc[0]:.2f}")
+        print(f"   종료가: ${df['Close'].iloc[-1]:.2f}")
+        print(f"   기간 수익률: {((df['Close'].iloc[-1]/df['Close'].iloc[0])-1)*100:.2f}%")
+        
+        # 백테스트 실행
+        t1 = time.time()
+        try:
+            data, ret = mom_strategy2(df, period1, period2, mfi_level, stop_loss, verbose=False)
+            t2 = time.time()
+            print(f"   백테스트 완료 (소요시간: {(t2-t1):.2f}초)")
+            
+            # 성과 분석
+            stats = tear_sheet1(data)
+            
+            # 결과 저장
+            results[ticker] = {
+                'data': data,
+                'stats': stats,
+                'df': df
+            }
+            
+        except Exception as e:
+            print(f"   ❌ {ticker} 백테스트 오류: {e}")
+            continue
+    
+    # =================================================================
+    # 6. 종목별 결과 비교 테이블
+    # =================================================================
+    if not results:
+        print("\n❌ 백테스트 결과가 없습니다.")
+        exit()
+    
+    print("\n" + "=" * 100)
+    print("📊 종목별 성과 비교 (CAGR 포함)")
+    print("=" * 100)
+    
+    # 비교 테이블 생성
+    comparison_data = []
+    for ticker, result in results.items():
+        stats = result['stats']
+        comparison_data.append({
+            '종목': ticker,
+            '전략 수익률 (%)': f"{stats['strategy_return']*100:.2f}",
+            'Buy&Hold 수익률 (%)': f"{stats['buy_hold_return']*100:.2f}",
+            '초과 수익 (%p)': f"{(stats['strategy_return'] - stats['buy_hold_return'])*100:.2f}",
+            '전략 CAGR (%)': f"{stats['cagr_strategy']*100:.2f}",
+            'Buy&Hold CAGR (%)': f"{stats['cagr_benchmark']*100:.2f}",
+            '샤프 비율': f"{stats['sharpe_ratio']:.3f}",
+            '소르티노 비율': f"{stats['sortino_ratio']:.3f}",
+            '칼마 비율': f"{stats['calmar_ratio']:.3f}",
+            'MDD (%)': f"{stats['max_drawdown']*100:.2f}",
+            '총 거래': f"{stats['total_trades']}",
+            '승률 (%)': f"{stats['win_rate']*100:.2f}",
+        })
+    
+    comparison_df = pd.DataFrame(comparison_data)
+    print(comparison_df.to_string(index=False))
+    print("=" * 100)
+    
+    # =================================================================
+    # 7. 결과 시각화 - 여러 종목 비교
     # =================================================================
     print("\n" + "=" * 50)
     print("결과 시각화")
     print("=" * 50)
-
-    # Buy & Hold 수익률 계산
-    buy_and_hold = df['Close'] / df['Close'].iloc[0]
-
-    # 그래프 생성
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # 수익률 플롯
-    buy_and_hold.plot(ax=ax, label='Buy & Hold', linewidth=2)
-    data['Cumulative_Return'].plot(ax=ax, label='MOM Strategy2', linewidth=2)
-
-    # 매수/매도 포인트 표시
-    buy_price = data['Buy_Price'] / data['Close'].iloc[0]
-    sell_price = data['Sell_Price'] / data['Close'].iloc[0]
-
-    buy_price.plot(ax=ax, label='Buy', marker='^', color='green', 
-                   markersize=6, alpha=0.7)
-    sell_price.plot(ax=ax, label='Sell', marker='v', color='red', 
-                    markersize=6, alpha=0.7)
-
-    ax.set_title(f'TQQQ MOM Strategy2 백테스트 결과 (고정 파라미터)', fontsize=18)
+    
+    # 여러 종목 누적 수익률 비교 그래프
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, len(results)))
+    
+    for (ticker, result), color in zip(results.items(), colors):
+        data = result['data']
+        data['Cumulative_Return'].plot(ax=ax, label=f'{ticker} Strategy', 
+                                      linewidth=2, color=color, alpha=0.8)
+        
+        # Buy & Hold도 함께 표시
+        df = result['df']
+        buy_hold = df['Close'] / df['Close'].iloc[0]
+        buy_hold.plot(ax=ax, label=f'{ticker} Buy&Hold', 
+                     linewidth=1.5, color=color, linestyle='--', alpha=0.6)
+    
+    ax.set_title('MOM Strategy2 백테스트 결과 비교 (다중 종목)', fontsize=18)
     ax.set_xlabel('Date', fontsize=12)
     ax.set_ylabel('Cumulative Returns', fontsize=12)
-    ax.legend(fontsize=10)
+    ax.legend(fontsize=9, loc='best', ncol=2)
     ax.grid(alpha=0.3)
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
-
-    # =================================================================
-    # 6. 상세 분석 그래프
-    # =================================================================
-    # 모멘텀과 MFI 지표 시각화
-    fig, ax = plt.subplots(3, 1, figsize=(12, 10), sharex=True, 
-                          height_ratios=(5, 2.5, 2.5))
-
-    # 수익률 비교
-    buy_and_hold.plot(ax=ax[0], label='Buy & Hold', linewidth=2)
-    data['Cumulative_Return'].plot(ax=ax[0], label='MOM Strategy2', linewidth=2)
-    ax[0].set_ylabel('Cumulative Returns', fontsize=12)
-    ax[0].grid(alpha=0.3)
-    ax[0].legend()
-
-    # 모멘텀 지표
-    data['Mom'].plot(ax=ax[1], label='Momentum', color='orange', linewidth=1)
-    ax[1].axhline(y=0, color='red', linestyle='-', alpha=0.7)
-    ax[1].set_ylabel('Momentum', fontsize=12)
-    ax[1].grid(alpha=0.3)
-
-    # MFI 지표
-    data['MFI'].plot(ax=ax[2], label='MFI', color='purple', linewidth=1)
-    ax[2].axhline(y=mfi_level, color='red', linestyle='-', alpha=0.7)
-    ax[2].set_xlabel('Date', fontsize=12)
-    ax[2].set_ylabel('MFI', fontsize=12)
-    ax[2].grid(alpha=0.3)
-
-    plt.suptitle(f'TQQQ MOM Strategy2 상세 분석 (고정 파라미터)', fontsize=16)
+    
+    # CAGR 비교 바 차트
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    tickers = list(results.keys())
+    strategy_cagrs = [results[t]['stats']['cagr_strategy']*100 for t in tickers]
+    buyhold_cagrs = [results[t]['stats']['cagr_benchmark']*100 for t in tickers]
+    
+    x = np.arange(len(tickers))
+    width = 0.35
+    
+    bars1 = ax.bar(x - width/2, strategy_cagrs, width, label='Strategy CAGR', alpha=0.8)
+    bars2 = ax.bar(x + width/2, buyhold_cagrs, width, label='Buy&Hold CAGR', alpha=0.8)
+    
+    ax.set_xlabel('종목', fontsize=12)
+    ax.set_ylabel('CAGR (%)', fontsize=12)
+    ax.set_title('종목별 CAGR 비교', fontsize=16)
+    ax.set_xticks(x)
+    ax.set_xticklabels(tickers)
+    ax.legend()
+    ax.grid(alpha=0.3, axis='y')
+    
+    # 값 표시
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.1f}%', ha='center', va='bottom', fontsize=8)
+    
     plt.tight_layout()
     plt.show()
-
+    
     # =================================================================
-    # 7. 최종 결과 요약
+    # 8. 최종 결과 요약
     # =================================================================
-    print("\n" + "=" * 70)
-    print("🎯 TQQQ Strategy2 최종 결과 요약")
-    print("=" * 70)
-
-    # 백테스트 기간 정보
-    start_date = df.index[0].strftime('%Y-%m-%d')
-    end_date = df.index[-1].strftime('%Y-%m-%d')
-    print(f"\n📅 백테스트 기간: {start_date} ~ {end_date}")
-    print(f"📊 거래일 수: {len(df)}일 ({stats['trading_period']:.2f}년)")
-
-    print(f"\n💰 수익률 비교:")
-    print(f"   • Buy & Hold: {stats['buy_hold_return']*100:.2f}%")
-    print(f"   • MOM Strategy2: {stats['strategy_return']*100:.2f}%")
-    excess = (stats['strategy_return'] - stats['buy_hold_return']) * 100
-    if excess > 0:
-        print(f"   • 초과 수익: +{excess:.2f}%p ✅")
-    else:
-        print(f"   • 초과 수익: {excess:.2f}%p")
-
-    print(f"\n📈 성과 지표 요약:")
-    print(f"   • CAGR: {stats['cagr_strategy']*100:.2f}% (Buy & Hold: {stats['cagr_benchmark']*100:.2f}%)")
-    print(f"   • 샤프 비율: {stats['sharpe_ratio']:.3f}")
-    print(f"   • 소르티노 비율: {stats['sortino_ratio']:.3f}")
-    print(f"   • 칼마 비율: {stats['calmar_ratio']:.3f}")
-    print(f"   • 최대 낙폭 (MDD): {stats['max_drawdown']*100:.2f}% (Buy & Hold: {stats['mdd_benchmark']*100:.2f}%)")
-
-    print(f"\n🔧 사용된 파라미터:")
-    print(f"   • 모멘텀 기간: {period1}일")
-    print(f"   • MFI 기간: {period2}일")
-    print(f"   • MFI 임계값: {mfi_level}")
-    print(f"   • 손절매 비율: {stop_loss*100:.1f}%")
-
-    print(f"\n📊 거래 통계 요약:")
-    print(f"   • 총 거래: {stats['total_trades']}회")
-    print(f"   • 승률: {stats['win_rate']*100:.2f}%")
-    print(f"   • 수익/손실 비율: {stats['profit_loss_ratio']:.2f}")
-
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 100)
+    print("🎯 최종 결과 요약")
+    print("=" * 100)
+    
+    # 최고 성과 종목 찾기
+    best_strategy_return = max(results.items(), key=lambda x: x[1]['stats']['strategy_return'])
+    best_cagr = max(results.items(), key=lambda x: x[1]['stats']['cagr_strategy'])
+    best_sharpe = max(results.items(), key=lambda x: x[1]['stats']['sharpe_ratio'])
+    
+    print(f"\n🏆 최고 성과 종목:")
+    print(f"   • 최고 수익률: {best_strategy_return[0]} ({best_strategy_return[1]['stats']['strategy_return']*100:.2f}%)")
+    print(f"   • 최고 CAGR: {best_cagr[0]} ({best_cagr[1]['stats']['cagr_strategy']*100:.2f}%)")
+    print(f"   • 최고 샤프 비율: {best_sharpe[0]} ({best_sharpe[1]['stats']['sharpe_ratio']:.3f})")
+    
+    print(f"\n📊 종목별 상세 결과는 위의 비교 테이블을 참조하세요.")
+    print(f"   (CAGR, 샤프 비율, MDD 등 모든 지표 포함)")
+    
+    print("\n" + "=" * 100)
     print("✅ 백테스트 완료!")
-    print("=" * 70)
+    print("=" * 100)
